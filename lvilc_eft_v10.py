@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import trapezoid
 
 # --------------------------------------------------------------------------------
-# 1. 環境構築 (CAMBのインストール)
+# 1. 環境構築 & CAMB準備
 # --------------------------------------------------------------------------------
 try:
     import camb
@@ -15,7 +15,7 @@ except ImportError:
     import camb
 
 # --------------------------------------------------------------------------------
-# 2. パラメータ設定
+# 2. パラメータ設定 (ここがないとエラーになります)
 # --------------------------------------------------------------------------------
 h = 0.6736
 params = {
@@ -48,7 +48,7 @@ S_k = 1.0 / (1.0 + (kh / kc_fid)**lam_fid)
 P_lvilc = P_lcdm * S_k
 
 # --------------------------------------------------------------------------------
-# 4. Sigma8 計算 (ここで変数を確実に定義します)
+# 4. Sigma8 計算 (変数を定義)
 # --------------------------------------------------------------------------------
 def calc_sigma_R(k, Pk, R_Mpc_h):
     x = k * R_Mpc_h
@@ -58,79 +58,124 @@ def calc_sigma_R(k, Pk, R_Mpc_h):
     integrand = k**2 * Pk * W**2
     return np.sqrt(trapezoid(integrand, k) / (2 * np.pi**2))
 
-# 変数名を統一して計算
-sigma8_lcdm = calc_sigma_R(kh, P_lcdm, 8.0)
-sigma8_lvilc = calc_sigma_R(kh, P_lvilc, 8.0)
-print(f"Sigma8 LCDM : {sigma8_lcdm:.5f}")
-print(f"Sigma8 LVILC: {sigma8_lvilc:.5f}")
+# あなたのコードに合わせて変数名を「_calc」付きで定義
+sigma8_lcdm_calc = calc_sigma_R(kh, P_lcdm, 8.0)
+sigma8_lvilc_calc = calc_sigma_R(kh, P_lvilc, 8.0)
+
+print(f"Sigma8 LCDM : {sigma8_lcdm_calc:.5f}")
+print(f"Sigma8 LVILC: {sigma8_lvilc_calc:.5f}")
 
 # --------------------------------------------------------------------------------
-# 5. HMF (ハロー質量関数) 計算
+# 5. HMF (ハロー質量関数) の精密計算 (あなたが持ってきた成功ロジック)
 # --------------------------------------------------------------------------------
+# 質量範囲
 M_bins = np.logspace(8, 13, 100)
 rho_crit = 2.775e11
 Om_m = (params['omch2'] + params['ombh2']) / h**2
 rho_m = rho_crit * Om_m
 
-def get_sigma_vector(k, Pk, M):
-    R = (3 * M / (4 * np.pi * rho_m))**(1.0/3.0)
-    return np.array([calc_sigma_R(k, Pk, r) for r in R])
+def get_sigma_and_derivative(k, Pk, M_vector):
+    """
+    sigma(R) と d(ln sigma)/d(ln M) を計算する
+    """
+    # Mass -> Radius
+    R_vector = (3 * M_vector / (4 * np.pi * rho_m))**(1.0/3.0)
 
-def get_hmf_proxy(M, sig):
-    # d(ln sigma)/d(ln M)
-    dlns_dlnM = np.abs(np.gradient(np.log(sig), np.gradient(np.log(M))))
-    # Sheth-Tormen
-    A, a, p, dc = 0.3222, 0.707, 0.3, 1.686
-    nu = dc / sig
-    f_nu = A * np.sqrt(2*a/np.pi) * (1+(1/(a*nu**2))**p) * nu * np.exp(-a*nu**2/2)
-    return (rho_m/M) * f_nu * dlns_dlnM
+    # 1. Sigmaの計算
+    sigmas = []
+    for R in R_vector:
+        sigmas.append(calc_sigma_R(k, Pk, R))
+    sigmas = np.array(sigmas)
 
-sig_lcdm_M = get_sigma_vector(kh, P_lcdm, M_bins)
-sig_lvilc_M = get_sigma_vector(kh, P_lvilc, M_bins)
+    # 2. 微分項 |d ln(sigma) / d ln M| の計算
+    d_ln_sigma = np.gradient(np.log(sigmas))
+    d_ln_M = np.gradient(np.log(M_vector))
+    # ゼロ除算回避
+    d_ln_M[d_ln_M==0] = 1e-10
 
-hmf_lcdm = get_hmf_proxy(M_bins, sig_lcdm_M)
-hmf_lvilc = get_hmf_proxy(M_bins, sig_lvilc_M)
-ratio = hmf_lvilc / hmf_lcdm
+    abs_dlns_dlnM = np.abs(d_ln_sigma / d_ln_M)
+
+    return sigmas, abs_dlns_dlnM
+
+def compute_hmf_full(M_vector, sigma, dlns_dlnM):
+    """
+    Sheth-Tormen HMF
+    """
+    A, a, p = 0.3222, 0.707, 0.3
+    delta_c = 1.686
+    nu = delta_c / sigma
+
+    # f(nu)
+    f_nu = A * np.sqrt(2*a/np.pi) * (1 + (1/(a*nu**2))**p) * nu * np.exp(-a * nu**2 / 2)
+
+    # Full formula
+    return (rho_m / M_vector) * f_nu * dlns_dlnM
+
+# --- 計算実行 ---
+# LCDM
+sig_lcdm, deriv_lcdm = get_sigma_and_derivative(kh, P_lcdm, M_bins)
+dn_lcdm = compute_hmf_full(M_bins, sig_lcdm, deriv_lcdm)
+
+# LVILC
+sig_lvilc, deriv_lvilc = get_sigma_and_derivative(kh, P_lvilc, M_bins)
+dn_lvilc = compute_hmf_full(M_bins, sig_lvilc, deriv_lvilc)
+
+# 比率
+ratio_hmf = dn_lvilc / dn_lcdm
 
 # --------------------------------------------------------------------------------
-# 6. プロット (警告回避のため rf文字列を使用)
+# 6. プロット作成 (SyntaxWarning修正版)
 # --------------------------------------------------------------------------------
-fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+fig, axes = plt.subplots(1, 3, figsize=(20, 6))
 
-# Panel 1
-ax[0].plot(kh, S_k, color='crimson', lw=3, label=rf'Transfer Function ($k_c={kc_fid}, \lambda={lam_fid}$)')
-ax[0].set_xscale('log')
-ax[0].set_title('Power Spectrum Suppression')
-ax[0].set_ylabel(r'Ratio $P_{\mathrm{LVILC}} / P_{\Lambda\mathrm{CDM}}$')
-ax[0].set_xlabel(r'Wavenumber $k$ [h/Mpc]')
-ax[0].axvspan(10, 100, color='orange', alpha=0.1, label='Dwarf Scale')
-ax[0].legend()
-ax[0].grid(alpha=0.3)
+# --- Plot 1: Transfer Function ---
+ax = axes[0]
+# 修正: label=f'...' -> label=rf'...' にして警告を消去
+ax.plot(kh, S_k, color='crimson', lw=3, label=rf'Transfer Function ($k_c={kc_fid}, \lambda={lam_fid}$)')
+ax.axvspan(0.1, 3.0, color='gray', alpha=0.1, label=r'Lyman-$\alpha$ Safe Zone')
+ax.axvspan(10.0, 100.0, color='orange', alpha=0.1, label='Dwarf Galaxy Scale')
+ax.set_xscale('log')
+ax.set_xlabel(r'Wavenumber $k$ $[h/\mathrm{Mpc}]$', fontsize=12)
+ax.set_ylabel(r'Ratio $P_{\mathrm{LVILC}} / P_{\Lambda\mathrm{CDM}}$', fontsize=12)
+ax.set_title('Power Spectrum Suppression', fontsize=14)
+ax.legend()
+ax.grid(alpha=0.3)
 
-# Panel 2
-# ここで計算済みの変数 sigma8_lcdm, sigma8_lvilc を使います
-ax[1].text(0.5, 0.6, "Large Scale Structure Check", fontsize=14, ha='center', fontweight='bold')
-ax[1].text(0.5, 0.4, rf"$\sigma_8$ ($\Lambda$CDM): {sigma8_lcdm:.5f}" + "\n" +
-                     rf"$\sigma_8$ (LVILC): {sigma8_lvilc:.5f}" + "\n\n" +
-                     f"Diff: {sigma8_lvilc - sigma8_lcdm:.5f}", 
-           fontsize=13, ha='center', bbox=dict(facecolor='white', alpha=0.8))
-ax[1].axis('off')
-ax[1].set_title(r'$\sigma_8$ Consistency')
+# --- Plot 2: Sigma(R) ---
+ax = axes[1]
+R_range = np.linspace(1, 20, 50)
+sig8_lcdm_plt = [calc_sigma_R(kh, P_lcdm, r) for r in R_range]
+sig8_lvilc_plt = [calc_sigma_R(kh, P_lvilc, r) for r in R_range]
 
-# Panel 3
-ax[2].plot(M_bins, ratio, 'purple', lw=3)
-ax[2].set_xscale('log')
-ax[2].set_ylim(0, 1.1)
-ax[2].axhline(1, color='k', ls='--')
-ax[2].set_xlabel(r'Halo Mass $M_{\odot}/h$')
-ax[2].set_title('Missing Satellites Solution')
-ax[2].fill_between(M_bins, 0, ratio, color='purple', alpha=0.1)
+ax.plot(R_range, sig8_lcdm_plt, 'k--', label=r'$\Lambda$CDM')
+ax.plot(R_range, sig8_lvilc_plt, 'r-', lw=2, label='LVILC-EFT')
+ax.axvline(8.0, color='blue', ls=':', label=r'$R=8 \mathrm{Mpc}/h$')
+ax.set_xlabel(r'Scale $R$ $[\mathrm{Mpc}/h]$', fontsize=12)
+ax.set_ylabel(r'$\sigma(R)$', fontsize=12)
+# 修正: タイトルに raw string (r) を使用
+ax.set_title(rf'$\sigma_8$ Consistent' + '\n' + f'Diff: {sigma8_lvilc_calc - sigma8_lcdm_calc:.5f}', fontsize=14)
+ax.legend()
+ax.grid(alpha=0.3)
 
-# Highlight
-idx = np.argmin(np.abs(M_bins - 1e8))
-val = ratio[idx]
-ax[2].plot(M_bins[idx], val, 'ro', markersize=8)
-ax[2].text(M_bins[idx], val+0.1, f"{val*100:.1f}% Survival", color='red', fontweight='bold')
+# --- Plot 3: HMF Suppression Ratio ---
+ax = axes[2]
+ax.plot(M_bins, ratio_hmf, color='purple', lw=3, label='Survival Rate')
+ax.axhline(1.0, color='k', ls='--', label='No Suppression')
+
+# 重要な数値を表示
+val_at_1e8 = ratio_hmf[np.argmin(np.abs(M_bins - 1e8))]
+ax.plot(1e8, val_at_1e8, 'ro', markersize=8)
+ax.text(1e8, val_at_1e8 + 0.05, f'{val_at_1e8*100:.1f}% Survival\n@ $10^8 M_\odot$',
+        color='red', fontweight='bold')
+
+ax.set_xscale('log')
+ax.set_xlabel(r'Halo Mass $M$ $[M_\odot/h]$', fontsize=12)
+ax.set_ylabel(r'Abundance Ratio $n_{\mathrm{LVILC}} / n_{\Lambda\mathrm{CDM}}$', fontsize=12)
+ax.set_title('Missing Satellites Solution', fontsize=14)
+ax.fill_between(M_bins, 0, ratio_hmf, color='purple', alpha=0.1)
+ax.grid(alpha=0.3, which='both')
+ax.set_ylim(0, 1.1)
+ax.legend()
 
 plt.tight_layout()
 plt.show()
