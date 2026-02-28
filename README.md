@@ -44,7 +44,7 @@ We conducted a rigorous MCMC analysis (emcee, 64 walkers, 10,000 steps) fitting 
 *(⬇️ Drag and drop your Corner Plot image and Growth Rate Curve image here ⬇️)*
 
 `[ここにMCMCのCorner Plotの画像をドラッグ＆ドロップしてください]`
-`[ダウンロード - 2026-02-28T200131.898.png]`
+`![ダウンロード - 2026-02-28T200131.898.png]`
 
 ---
 
