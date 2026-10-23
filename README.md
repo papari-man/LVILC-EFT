@@ -1,3 +1,5 @@
+> ⚠️ この版（v9・v10）は、その後の観測と合わないことがわかったため、記録として残しています。
+
 # Overlap Gravity: Information-Theoretic Cutoff of Gravitational Binding
 
 **Is Dark Energy an illusion caused by the causal communication limit of space?**
